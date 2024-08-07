@@ -94,7 +94,7 @@ def filter_and_process_labels(input_filepath,output_filepath,classes):
 
 
         #Remove labels for images not present in the data
-        base_path_images = "./data/raw/Test/1.0_Original_Fundus_Images"
+        base_path_images = f"./data/raw/{split}/1.0_Original_Fundus_Images"
         images_name = [p.split("/")[-1] for p in glob.glob(f"{base_path_images}/*/*")]
         missing_images = ~(df_all_source["ImageID"].isin(images_name))
         df_all_source_present_images = df_all_source[~missing_images]
