@@ -14,7 +14,7 @@ class MaskingDataset(Dataset):
     def __init__(self, data_dir, masking_spread=None, inverse_roi=False, bounding_box=False, transform=None):
         self.img_paths = glob.glob(f'{data_dir.removesuffix("/")}/images/*.png')
         self.roi_paths = glob.glob(f'{data_dir.removesuffix("/")}/rois/*.png')
-        self.img_labels = pd.read_csv(f'{data_dir.removesuffix("/")}/processed_labels.csv',index_col=0)
+        self.img_labels = pd.read_csv(f'{data_dir.removesuffix("/")}/processed_labels.csv')
         self.img_labels = self.img_labels[self.img_labels["ImageID"].isin([p.split("/")[-1] for p in glob.glob(f'{data_dir.removesuffix("/")}/images/*.png')])]
         self.img_labels["Onehot"] = self.img_labels["Onehot"].apply(lambda x: ast.literal_eval(x))
         
