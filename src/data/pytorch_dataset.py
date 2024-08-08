@@ -12,14 +12,14 @@ import cv2
 
 class MaskingDataset(Dataset):
     def __init__(self, data_dir, masking_spread=None, inverse_roi=False, bounding_box=False, transform=None):
-        self.img_paths = glob.glob(f'{data_dir.removesuffix("/")}/images/*.png')
-        self.roi_paths = glob.glob(f'{data_dir.removesuffix("/")}/rois/*.png')
+        self.img_paths = glob.glob(f'{data_dir.removesuffix("/")}/images/*')
+        self.roi_paths = glob.glob(f'{data_dir.removesuffix("/")}/rois/*')
         self.img_labels = pd.read_csv(f'{data_dir.removesuffix("/")}/processed_labels.csv')
-        self.img_labels = self.img_labels[self.img_labels["ImageID"].isin([p.split("/")[-1] for p in glob.glob(f'{data_dir.removesuffix("/")}/images/*.png')])]
+        self.img_labels = self.img_labels[self.img_labels["ImageID"].isin([p.split("/")[-1] for p in glob.glob(f'{data_dir.removesuffix("/")}/images/*')])]
         self.img_labels["Onehot"] = self.img_labels["Onehot"].apply(lambda x: ast.literal_eval(x))
         
         self.img_paths = [f"{data_dir.removesuffix('/')}/images/{img_id}" for img_id in self.img_labels["ImageID"]]
-        self.roi_paths = [f"{data_dir.removesuffix('/')}/rois/{img_id}" for img_id in self.img_labels["ImageID"]]
+        self.roi_paths = [f"{data_dir.removesuffix('/')}/rois/{img_id[:-4]}.png" for img_id in self.img_labels["ImageID"]]
 
         self.masking_spread = masking_spread
         self.inverse_roi = inverse_roi

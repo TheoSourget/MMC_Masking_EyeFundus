@@ -20,7 +20,7 @@ from sklearn.metrics import roc_auc_score,f1_score
 from torch.utils.tensorboard import SummaryWriter
 
 from torch.utils.data import DataLoader
-from sklearn.model_selection import GroupShuffleSplit, GroupKFold
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold, StratifiedGroupKFold
 from src.data.pytorch_dataset import MaskingDataset
 
 torch.manual_seed(1907)
@@ -113,10 +113,11 @@ def main():
         v2.ColorJitter(brightness=(0.7,1.1))
     ])
 
+    y = np.array(training_data.img_labels["Onehot"].tolist())[:,0]
     #Create k-fold for train/val
-    group_kfold = GroupKFold(n_splits=NB_FOLDS)
+    stratified_group_kfold = StratifiedGroupKFold(n_splits=NB_FOLDS)
     
-    for i, (train_index,val_index) in enumerate(group_kfold.split(training_data.img_labels, groups= training_data.img_labels['PatientID'])):
+    for i, (train_index,val_index) in enumerate(stratified_group_kfold.split(X=training_data.img_labels, y=y, groups= training_data.img_labels['PatientID'])):
         print(f"Start FOLD {i}:")
         writer = SummaryWriter(f'{base_run_name}/Fold{i}')
         train_data = MaskingDataset(data_dir="./data/processed/Train",transform=transforms,masking_spread=masking_spread,inverse_roi=inverse_roi,bounding_box=bounding_box)

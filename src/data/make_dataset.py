@@ -141,11 +141,10 @@ def create_rois(input_filepath,output_filepath):
             print(masks_path)
             for idx,m_name in enumerate(tqdm(masks_names)):
                 #Resize the image and save it in the processed folder
-                if m_name in labels["ImageID"].unique():
-                    mask = np.expand_dims(io.imread(masks_path[idx]),-1)
-                    mask_resize = tf.image.resize_with_pad(mask, 512, 512)
-                    mask_resize = mask_resize > 0
-                    tf.keras.utils.save_img(f"./{output_filepath}/{split}/rois/{m_name}", mask_resize, scale=True, data_format="channels_last") 
+                mask = np.expand_dims(io.imread(masks_path[idx]),-1)
+                mask_resize = tf.image.resize_with_pad(mask, 512, 512)
+                mask_resize = mask_resize > 0
+                tf.keras.utils.save_img(f"./{output_filepath}/{split}/rois/{m_name}", mask_resize, scale=True, data_format="channels_last") 
 
 if __name__ == '__main__':
     log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
