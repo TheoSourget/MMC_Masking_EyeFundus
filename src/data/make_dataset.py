@@ -65,18 +65,20 @@ def main(input_filepath, output_filepath, classes):
 
 
 
-
 def filter_and_process_labels(input_filepath,output_filepath,classes):
     for split in ["Train","Test"]:
         #Get base labels
         base_path_labels = f"./data/raw/{split}/6.0_Glaucoma_Decision"
 
         df_bosch = pd.read_csv(f'{base_path_labels}/Glaucoma_Decision_Comparison_Bosch_majority.csv')
-        #Rename label columns to fit the others
-        df_bosch.rename({"Majority Decision":"Glaucoma Decision"},axis=1,inplace=True)
+        #Rename label columns to have the same for every dataframe
+        df_bosch.columns = [*df_bosch.columns[:-1], 'Glaucoma Decision']
 
         df_forus = pd.read_csv(f'{base_path_labels}/Glaucoma_Decision_Comparison_Forus_majority.csv')
+        df_forus.columns = [*df_forus.columns[:-1], 'Glaucoma Decision']
+
         df_remidio = pd.read_csv(f'{base_path_labels}/Glaucoma_Decision_Comparison_Remidio_majority.csv')
+        df_remidio.columns = [*df_remidio.columns[:-1], 'Glaucoma Decision']
 
         #Create ImageID as the real file name and extension
         df_bosch["ImageID"] = df_bosch["Images"].apply(lambda x:x.split("-")[0].replace("jpg","JPG"))
