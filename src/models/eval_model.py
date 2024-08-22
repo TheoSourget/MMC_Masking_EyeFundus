@@ -52,7 +52,7 @@ def main():
     NB_FOLDS = int(os.environ.get("NB_FOLDS"))
     BATCH_SIZE = int(os.environ.get("BATCH_SIZE"))
     CLASSES = os.environ.get("CLASSES").split(",")
-    models_names=["NormalDataset","NoLungDataset_0","OnlyLungDataset_0"]
+    models_names=["NormalDataset","NoDiskDataset_0","OnlyDiskDataset_0"]
         
     #Load the base dataset
     training_data = MaskingDataset(data_dir="./data/processed/Train")
@@ -64,10 +64,10 @@ def main():
     
     valid_params={
         "Normal":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
-        "NoLung":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
-        "NoLungBB":{"masking_spread":0,"inverse_roi":False,"bounding_box":True},
-        "OnlyLung":{"masking_spread":0,"inverse_roi":True,"bounding_box":False},
-        "OnlyLungBB":{"masking_spread":0,"inverse_roi":True,"bounding_box":True}
+        "NoDisc":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
+        "NoDiscBB":{"masking_spread":0,"inverse_roi":False,"bounding_box":True},
+        "OnlyDisc":{"masking_spread":0,"inverse_roi":True,"bounding_box":False},
+        "OnlyDiscBB":{"masking_spread":0,"inverse_roi":True,"bounding_box":True}
     }
 
     with open("./data/interim/valid_results.csv", "w") as csv_file:
