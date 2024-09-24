@@ -13,14 +13,17 @@ import os.path
 
 import torch
 from torchvision.models import resnet50,densenet121
+from torchvision.models.feature_extraction import create_feature_extractor
 from torch.nn.functional import sigmoid
 from sklearn.metrics import roc_auc_score,f1_score
 
 from torch.utils.data import DataLoader
-from sklearn.model_selection import GroupShuffleSplit, GroupKFold
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold, StratifiedGroupKFold
 from src.data.pytorch_dataset import MaskingDataset
 
 import shap
+from scipy.linalg import sqrtm
+from scipy.spatial.distance import cosine
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -115,10 +118,139 @@ def generate_explainability_map():
             e = shap.DeepExplainer(model, images)
             shap_values = e.shap_values(test_images)
 
-def main():
-    # generate_auc_per_label()
-    generate_explainability_map()
 
+def get_embedding(model_name,valid_params):
+    NB_FOLDS = int(os.environ.get("NB_FOLDS"))
+    BATCH_SIZE = int(os.environ.get("BATCH_SIZE"))
+    CLASSES = os.environ.get("CLASSES").split(",")
+    
+    #Load the base dataset
+    training_data = MaskingDataset(data_dir="./data/processed/Train")
+    testing_data = MaskingDataset(data_dir="./data/processed/Test")
+
+    y = np.array(training_data.img_labels["Onehot"].tolist())[:,0]
+
+    #Create k-fold for train/val
+    stratified_group_kfold = StratifiedGroupKFold(n_splits=NB_FOLDS)
+    
+    
+    models_flatten_output = {
+        masking_param:[] for masking_param in valid_params
+    }
+    
+    for masking_param in valid_params:
+        print(f"\n{masking_param}")
+        for i, (train_index,val_index) in enumerate(stratified_group_kfold.split(X=training_data.img_labels, y=y, groups= training_data.img_labels['PatientID'])):
+            val_data = MaskingDataset(data_dir="./data/processed/Train",**valid_params[masking_param])
+            val_data.img_labels = training_data.img_labels.iloc[val_index].reset_index(drop=True)
+            val_data.img_paths = np.array(training_data.img_paths)[val_index]
+            val_data.roi_paths = np.array(training_data.roi_paths)[val_index]
+
+            valid_dataloader = DataLoader(val_data, batch_size=BATCH_SIZE)
+            
+            
+            #Define model, loss and optimizer
+            model = densenet121(weights='DEFAULT')#Weights pretrained on imagenet_1k
+            
+            # Freeze every layer except last denseblock and classifier
+            for param in model.parameters():
+                param.requires_grad = False
+            for param in model.features.denseblock4.denselayer16.parameters():
+                param.requires_grad = True
+           
+            kernel_count = model.classifier.in_features
+            model.classifier = torch.nn.Sequential(
+             torch.nn.Flatten(),
+             torch.nn.Linear(kernel_count, len(CLASSES))
+            )
+            
+            try:
+                model.load_state_dict(torch.load(f"./models/{model_name}/{model_name}_Fold{i}.pt"))
+                model.to(DEVICE)
+            except FileNotFoundError as e:
+                print("No model saved for fold",i)
+                continue
+            
+            return_nodes = {
+                "classifier.0": "flatten"
+            }
+            model = create_feature_extractor(model,return_nodes)
+            model.eval()
+            with torch.no_grad():
+                labels_dataset = []
+                for i, data in enumerate(valid_dataloader, 0):
+                    inputs, labels = data
+                    inputs,labels = inputs.float().to(DEVICE), torch.Tensor(np.array(labels)).float().to(DEVICE)
+                    outputs = model(inputs)
+                    models_flatten_output[masking_param].extend(outputs["flatten"].detach().cpu().tolist())
+                    labels_dataset += labels
+            models_flatten_output[masking_param] = np.array(models_flatten_output[masking_param])
+            break
+    return models_flatten_output, labels_dataset
+
+
+def get_cosine():
+    model_name="NormalDataset"
+    
+    valid_params={
+        "Normal":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
+        "NoDisc":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
+        "NoDiscBB":{"masking_spread":0,"inverse_roi":False,"bounding_box":True},
+        "OnlyDisc":{"masking_spread":0,"inverse_roi":True,"bounding_box":False},
+        "OnlyDiscBB":{"masking_spread":0,"inverse_roi":True,"bounding_box":True}
+    }
+    CLASSES = os.environ.get("CLASSES").split(",")
+    
+    models_flatten_output,labels_dataset = get_embedding(model_name,valid_params)
+
+    no_disc_similarities = []
+    only_disc_similarities = []
+    no_discbb_similarities = []
+    only_discbb_similarities = []
+    for j in range(len(models_flatten_output["Normal"])):
+        normal = models_flatten_output["Normal"][j]
+        nodisc = models_flatten_output["NoDisc"][j]
+        nodiscbb = models_flatten_output["NoDiscBB"][j]
+        onlydisc = models_flatten_output["OnlyDisc"][j]
+        onlydiscbb = models_flatten_output["OnlyDiscBB"][j]
+        
+        no_disc_similarities.append(1- cosine(normal,nodisc))
+        no_discbb_similarities.append(1- cosine(normal,nodiscbb))
+        only_disc_similarities.append(1- cosine(normal,onlydisc))
+        only_discbb_similarities.append(1- cosine(normal,onlydiscbb))
+    print(f"all,{np.mean(no_disc_similarities)}+/-{np.std(no_disc_similarities)},\
+            {np.mean(no_discbb_similarities)}+/-{np.std(no_discbb_similarities)},\
+            {np.mean(only_disc_similarities)}+/-{np.std(only_disc_similarities)},\
+            {np.mean(only_discbb_similarities)}+/-{np.std(only_discbb_similarities)}")
+
+    #Per class
+    for i,c in enumerate(CLASSES):
+        no_disc_similarities = []
+        only_disc_similarities = []
+        no_discbb_similarities = []
+        only_discbb_similarities = []
+        class_indices = [j for j, l in enumerate(labels_dataset) if l[i] == 1]
+        for j in class_indices:
+            normal = models_flatten_output["Normal"][j]
+            nodisc = models_flatten_output["NoDisc"][j]
+            nodiscbb = models_flatten_output["NoDiscBB"][j]
+            onlydisc = models_flatten_output["OnlyDisc"][j]
+            onlydiscbb = models_flatten_output["OnlyDiscBB"][j]
+            
+            no_disc_similarities.append(1- cosine(normal,nodisc))
+            no_discbb_similarities.append(1- cosine(normal,nodiscbb))
+            only_disc_similarities.append(1- cosine(normal,onlydisc))
+            only_discbb_similarities.append(1- cosine(normal,onlydiscbb))
+        print(f"{c},{np.mean(no_disc_similarities)}+/-{np.std(no_disc_similarities)},\
+            {np.mean(no_discbb_similarities)}+/-{np.std(no_discbb_similarities)},\
+            {np.mean(only_disc_similarities)}+/-{np.std(only_disc_similarities)},\
+            {np.mean(only_discbb_similarities)}+/-{np.std(only_discbb_similarities)}")
+
+
+def main():
+    #generate_auc_per_label()
+    #generate_explainability_map()
+    get_cosine()
 if __name__ == '__main__':
     log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_fmt)
