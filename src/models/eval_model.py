@@ -15,7 +15,7 @@ from sklearn.metrics import roc_auc_score,f1_score
 
 
 from torch.utils.data import DataLoader
-from sklearn.model_selection import GroupShuffleSplit, GroupKFold
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold, StratifiedGroupKFold
 from src.data.pytorch_dataset import MaskingDataset
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,15 +54,17 @@ def main():
     CLASSES = os.environ.get("CLASSES").split(",")
     TEST = False
     models_names=["NormalDataset","NoDiscDataset_0","NoDiscBB_0","OnlyDisc_0","OnlyDiscBB_0"]
-        
+    # models_names=["NoDiscDataset_0"]
+    
     #Load the base dataset
     training_data = MaskingDataset(data_dir="./data/processed/Train")
     testing_data = MaskingDataset(data_dir="./data/processed/Test")
     
 
     #Create k-fold for train/val
-    group_kfold = GroupKFold(n_splits=NB_FOLDS)
-    
+    stratified_group_kfold = StratifiedGroupKFold(n_splits=NB_FOLDS)
+    y = np.array(training_data.img_labels["Onehot"].tolist())[:,0]
+
     valid_params={
         "Normal":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
         "NoDisc":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
@@ -82,14 +84,13 @@ def main():
     for model_name in models_names:
         for param_config_name in valid_params:
             print(model_name,param_config_name)
-            for i, (train_index,val_index) in enumerate(group_kfold.split(training_data.img_labels, groups= training_data.img_labels['PatientID'])):        
-                print(val_index)
+            for i, (train_index,val_index) in enumerate(stratified_group_kfold.split(X=training_data.img_labels, y=y, groups= training_data.img_labels['PatientID'])):        
                 print("\nFOLD",i)
 
                 if TEST:
                     testing_data = MaskingDataset(data_dir="./data/processed/Test",**valid_params[param_config_name])
                     valid_dataloader = DataLoader(testing_data, batch_size=BATCH_SIZE)
-                else:    
+                else:
                     val_data = MaskingDataset(data_dir="./data/processed/Train",**valid_params[param_config_name])
                     val_data.img_labels = training_data.img_labels.iloc[val_index].reset_index(drop=True)
                     val_data.img_paths = np.array(training_data.img_paths)[val_index]
