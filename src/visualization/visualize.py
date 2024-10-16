@@ -22,21 +22,32 @@ from sklearn.model_selection import GroupShuffleSplit, GroupKFold, StratifiedGro
 from src.data.pytorch_dataset import MaskingDataset
 
 import shap
-from scipy.linalg import sqrtm
+from sklearn.manifold import TSNE
 from scipy.spatial.distance import cosine
+from src.models.utils import get_model,make_single_pred
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def generate_auc_per_label():
-    models_valid_results = pd.read_csv("./data/interim/valid_results.csv")
+def generate_auc_per_label(path_to_results="./data/interim/valid_results.csv",show=False):
+    models_valid_results = pd.read_csv(path_to_results)
     mean_auc_per_class = models_valid_results.groupby(["class","training_set","valid_set"])["auc"].mean()
     for class_label in mean_auc_per_class.index.get_level_values('class').unique():
         result_class = mean_auc_per_class[mean_auc_per_class.index.get_level_values('class').isin([class_label])].droplevel(0)
         result_class = result_class.reset_index().pivot(columns='valid_set',index='training_set',values='auc')
-        plt.figure()
-        plt.title(f"Mean AUC for {class_label} across different masking strategies")
-        sns.heatmap(result_class, annot=True,cmap="RdYlGn")
+        result_class = result_class[["NoDiscBB","NoDisc","Normal","OnlyDiscBB","OnlyDisc"]]
+
+        plt.figure(figsize=(9,7))
+        plt.title(f"Mean AUC for {class_label} across different masking strategies",size=20)
+        heatmap = sns.heatmap(result_class, annot=True,cmap="RdYlGn",annot_kws={"size": 15},xticklabels=["NoDiscBB","NoDisc","Full","OnlyDiscBB","OnlyDisc"],yticklabels=["NoDiscBB","NoDisc","Full","OnlyDiscBB","OnlyDisc"])
+        heatmap.yaxis.set_tick_params(labelsize = 15)
+        heatmap.xaxis.set_tick_params(labelsize = 15)
+        plt.xlabel('Validation set masking', fontsize=13)
+        plt.ylabel('Training set masking', fontsize=13)
+        plt.tight_layout()
         plt.savefig(f"./reports/figures/mean_auc_{class_label}.png",format='png')
+        if show:
+            plt.show()
 
 def generate_explainability_map():
     #Get hyperparameters 
@@ -148,34 +159,18 @@ def get_embedding(model_name,valid_params):
 
             valid_dataloader = DataLoader(val_data, batch_size=BATCH_SIZE)
             
-            
-            #Define model, loss and optimizer
-            model = densenet121(weights='DEFAULT')#Weights pretrained on imagenet_1k
-            
-            # Freeze every layer except last denseblock and classifier
-            for param in model.parameters():
-                param.requires_grad = False
-            for param in model.features.denseblock4.denselayer16.parameters():
-                param.requires_grad = True
-           
-            kernel_count = model.classifier.in_features
-            model.classifier = torch.nn.Sequential(
-             torch.nn.Flatten(),
-             torch.nn.Linear(kernel_count, len(CLASSES))
-            )
-            
-            try:
-                model.load_state_dict(torch.load(f"./models/{model_name}/{model_name}_Fold{i}.pt"))
-                model.to(DEVICE)
-            except FileNotFoundError as e:
-                print("No model saved for fold",i)
-                continue
+            #Define model
+            weights = {
+                "name":model_name,
+                "fold":i
+            }
             
             return_nodes = {
                 "classifier.0": "flatten"
             }
-            model = create_feature_extractor(model,return_nodes)
+            model = get_model(CLASSES,weights,return_nodes=return_nodes)
             model.eval()
+            
             with torch.no_grad():
                 labels_dataset = []
                 for i, data in enumerate(valid_dataloader, 0):
@@ -247,10 +242,79 @@ def get_cosine():
             {np.mean(only_discbb_similarities)}+/-{np.std(only_discbb_similarities)}")
 
 
+def plot_tsne(show=False):
+    model_name="NormalDataset"
+      
+    valid_params={
+        "Normal":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
+        "NoDisc":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
+        "NoDiscBB":{"masking_spread":0,"inverse_roi":False,"bounding_box":True},
+        "OnlyDisc":{"masking_spread":0,"inverse_roi":True,"bounding_box":False},
+        "OnlyDiscBB":{"masking_spread":0,"inverse_roi":True,"bounding_box":True}
+    }
+    
+    
+    models_embeddings,labels_dataset = get_embedding(model_name,valid_params)
+    
+    #We convert the dict from get_embedding to regroup them all (not group by masking anymore) in an array to perform the t-SNE
+    models_flatten_output = []
+    
+    #This array will keep the info on the masking used to produce this embedding, useful for visualisation later
+    labels_masking = []
+    for masking in models_embeddings:
+        models_flatten_output.extend(models_embeddings[masking])
+        labels_masking += [masking] * len(models_embeddings[masking])    
+    models_flatten_output = np.array(models_flatten_output)
+    
+    #Taken from https://learnopencv.com/t-sne-for-feature-visualization/
+    tsne = TSNE(n_components=2,perplexity=10).fit_transform(np.array(models_flatten_output))
+    # scale and move the coordinates so they fit [0; 1] range
+    def scale_to_01_range(x):
+        # compute the distribution range
+        value_range = (np.max(x) - np.min(x))
+     
+        # move the distribution so that it starts from zero
+        # by extracting the minimal value from all its values
+        starts_from_zero = x - np.min(x)
+     
+        # make the distribution fit [0; 1] by dividing by its range
+        return starts_from_zero / value_range
+     
+    # extract x and y coordinates representing the positions of the images on T-SNE plot
+    tx = tsne[:, 0]
+    ty = tsne[:, 1]
+     
+    tx = scale_to_01_range(tx)
+    ty = scale_to_01_range(ty)
+
+
+    #Plot divided by masking strategy
+    plt.figure()
+    for masking_param in valid_params:
+        indices = [j for j, l in enumerate(labels_masking) if l == masking_param]
+        # extract the coordinates of the points of the current masking
+        current_tx = np.take(tx, indices)
+        current_ty = np.take(ty, indices)
+        plt.scatter(current_tx,current_ty,label=masking_param,alpha=0.5)
+    plt.title(f"t-SNE of the embeddings before classication head of images with different masking strategy",size=15)
+    plt.legend(bbox_to_anchor=(1,1),fontsize=15)
+    plt.savefig(f"./reports/figures/tsne.png",format='png',bbox_inches='tight')
+    if show:
+        plt.show()
+
 def main():
-    #generate_auc_per_label()
-    #generate_explainability_map()
+    print("GENERATING AUC MATRICES")
+    generate_auc_per_label("./data/interim/valid_results.csv")
+    
+    print("\nCOMPUTING COSINE SIMILARITIES")
     get_cosine()
+    
+    print("\nCREATING t-SNE PLOT")
+    plot_tsne()
+    
+    # print("\nGENERATING EXPLAINABILITY MAPS")
+    # generate_explainability_map()
+
 if __name__ == '__main__':
     log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_fmt)

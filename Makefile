@@ -81,6 +81,9 @@ test_environment:
 train:
 	$(PYTHON_INTERPRETER) src/models/train_model.py
 
+visualization: requirements
+	$(PYTHON_INTERPRETER) src/visualization/visualize.py
+
 #################################################################################
 # PROJECT RULES                                                                 #
 #################################################################################

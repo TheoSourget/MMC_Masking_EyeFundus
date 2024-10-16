@@ -17,6 +17,7 @@ from sklearn.metrics import roc_auc_score,f1_score
 from torch.utils.data import DataLoader
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold, StratifiedGroupKFold
 from src.data.pytorch_dataset import MaskingDataset
+from src.models.utils import get_model
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,7 +55,6 @@ def main():
     CLASSES = os.environ.get("CLASSES").split(",")
     TEST = False
     models_names=["NormalDataset","NoDiscDataset_0","NoDiscBB_0","OnlyDisc_0","OnlyDiscBB_0"]
-    # models_names=["NoDiscDataset_0"]
     
     #Load the base dataset
     training_data = MaskingDataset(data_dir="./data/processed/Train")
@@ -99,27 +99,12 @@ def main():
 
                 
                 
-                #Define model, loss and optimizer
-                model = densenet121(weights='DEFAULT')#Weights pretrained on imagenet_1k
-                
-                # Freeze every layer except last denseblock and classifier
-                for param in model.parameters():
-                    param.requires_grad = False
-                for param in model.features.denseblock4.denselayer16.parameters():
-                    param.requires_grad = True
-               
-                kernel_count = model.classifier.in_features
-                model.classifier = torch.nn.Sequential(
-                 torch.nn.Flatten(),
-                 torch.nn.Linear(kernel_count, len(CLASSES))
-                )
-                
-                try:
-                    model.load_state_dict(torch.load(f"./models/{model_name}/{model_name}_Fold{i}.pt"))
-                    model.to(DEVICE)
-                except FileNotFoundError as e:
-                    print("No model saved for fold",i)
-                    continue
+                #Define model
+                weights = {
+                    "name":model_name,
+                    "fold":i
+                }
+                model = get_model(CLASSES,weights)
 
                 val_metric = valid_epoch(model,valid_dataloader)
                 if TEST:
