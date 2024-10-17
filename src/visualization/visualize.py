@@ -1,6 +1,3 @@
-from fileinput import filename
-from operator import index
-import click
 import logging
 from pathlib import Path
 from dotenv import find_dotenv, load_dotenv
@@ -25,6 +22,7 @@ import shap
 from sklearn.manifold import TSNE
 from scipy.spatial.distance import cosine
 from src.models.utils import get_model,make_single_pred
+import copy
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -242,7 +240,13 @@ def get_cosine():
             {np.mean(only_discbb_similarities)}+/-{np.std(only_discbb_similarities)}")
 
 
-def plot_tsne(show=False):
+def plot_tsne(model_name="NormalDataset",show=False):
+    """
+    Create t-SNE plot of the embeddings of images with different masking produced by the last layer before classification head
+    @param:
+        model_name: str, default "NormalDataset". Name of the model weights to use
+        show: bool, default False. Save and show the plot if True, only save it otherwise
+    """
     model_name="NormalDataset"
       
     valid_params={
@@ -302,6 +306,137 @@ def plot_tsne(show=False):
     if show:
         plt.show()
 
+
+def get_mean_std_proba(model,valid_dataloader):
+    model.to(DEVICE)
+    model.eval()
+    lst_labels = []
+    lst_probas = []
+    with torch.no_grad():
+        for i, data in enumerate(valid_dataloader, 0):
+            inputs, labels = data
+            if sum(labels) == 0:
+                continue
+            inputs,labels = inputs.float().to(DEVICE), torch.Tensor(np.array(labels)).float().to(DEVICE)
+            outputs = model(inputs)
+            output_sigmoid = sigmoid(outputs)
+            lst_labels.extend(labels.cpu().detach().numpy())
+            lst_probas.extend(output_sigmoid.cpu().detach().numpy())
+        
+        lst_labels = np.array(lst_labels)
+        lst_probas = np.array(lst_probas)
+    return np.mean(lst_probas),np.std(lst_probas)
+
+
+def dilation_impact_auc(model_name,masking_param,dilation_factors,class_to_dilate=0):
+    """
+    Apply validation set and compute AUC for images of the validation sets with increasing dilation factor
+    @param:
+        -model_name: name of the weights to load
+        -masking_param: dict with the masking parameters {"inverse_roi":False,"bounding_box":False}
+        -dilation_factors: list of the dilation factors (masking spread) to apply
+        -class to dilate: Which class should be dilated 0 for healthy and 1 for glaucoma
+    @return:
+        -The list of AUCs for each dilation factors
+    """
+    NB_FOLDS = int(os.environ.get("NB_FOLDS"))
+    BATCH_SIZE = 1
+    CLASSES = os.environ.get("CLASSES").split(",")
+    
+    #Load the base dataset
+    training_data = MaskingDataset(data_dir="./data/processed/Train")
+    
+    y = np.array(training_data.img_labels["Onehot"].tolist())[:,0]
+
+    #Create k-fold for train/val
+    stratified_group_kfold = StratifiedGroupKFold(n_splits=NB_FOLDS)
+    lst_auc = [[] for i in range(len(dilation_factors))]
+
+    for k,dilation_factor in enumerate(dilation_factors):
+        masking_param["masking_spread"]=dilation_factor
+        for i, (train_index,val_index) in enumerate(stratified_group_kfold.split(X=training_data.img_labels, y=y, groups= training_data.img_labels['PatientID'])):
+            
+            val_data = MaskingDataset(data_dir="./data/processed/Train",**masking_param)
+            val_data.img_labels = training_data.img_labels.iloc[val_index].reset_index(drop=True)
+            val_data.img_paths = np.array(training_data.img_paths)[val_index]
+            val_data.roi_paths = np.array(training_data.roi_paths)[val_index]
+            valid_dataloader = DataLoader(val_data, batch_size=BATCH_SIZE)
+
+            #Define model
+            weights = {
+                "name":model_name,
+                "fold":i
+            }
+            model = get_model(CLASSES,weights)
+            model.eval()
+        
+            lst_labels = []
+            lst_probas = []
+            auc_scores = []
+            valid_dataloader_normal = copy.deepcopy(valid_dataloader)
+            valid_dataloader_normal.dataset.masking_spread = 0
+
+            with torch.no_grad():
+                for i,data in enumerate(zip(valid_dataloader,valid_dataloader_normal)):
+                    if sum(data[0][1]) == class_to_dilate:
+                        inputs,labels = data[0]
+                    else:
+                        inputs,labels = data[1]
+                    
+                    inputs,labels = inputs.float().to(DEVICE), torch.Tensor(np.array(labels)).float().to(DEVICE)
+                    outputs = model(inputs)
+                    output_sigmoid = sigmoid(outputs)
+                    lst_labels.extend(labels.cpu().detach().numpy())
+                    lst_probas.extend(output_sigmoid.cpu().detach().numpy())
+                
+                lst_labels = np.array(lst_labels)
+                lst_probas = np.array(lst_probas)
+                for i in range(lst_labels.shape[1]):
+                    labels = lst_labels[:,i]
+                    probas = lst_probas[:,i]
+                    auc_score=roc_auc_score(labels,probas)
+                    auc_scores.append(auc_score)
+                
+                auc = auc_scores[0]
+                lst_auc[k].append(auc)
+    return lst_auc
+
+def plot_impact_auc(model_name,masking_param,savefile_name,show=False):
+    """
+    Plot the evolution of AUC while dilating the mask for model trained with No Disc and Only Disc images
+    @param:
+        -model_name: name of the weights to load
+        -masking_param: dict with the masking parameters {"inverse_roi":False,"bounding_box":False}
+        -savefile_name: Name of the file used to save the plot
+        -show: bool, default False. Save and show the plot if True, only save it otherwise
+    """
+    dilation_factors = [0,5,10,25,50,100,150,200,300,400,500]
+
+    lst_auc_healthy_dilation = dilation_impact_auc(model_name,masking_param,dilation_factors,0)
+    lst_auc_glaucoma_dilation = dilation_impact_auc(model_name,masking_param,dilation_factors,1)
+    
+    plt.figure()
+    mean_auc_healthy = np.array([np.mean(lst_auc_healthy_dilation[k]) for k in range(len(lst_auc_healthy_dilation))])
+    std_auc_healthy = np.array([np.std(lst_auc_healthy_dilation[k]) for k in range(len(lst_auc_healthy_dilation))])
+    plt.plot(dilation_factors,mean_auc_healthy,marker="o",label="healthy images",color="tab:blue")
+    plt.fill_between(dilation_factors, mean_auc_healthy-std_auc_healthy, mean_auc_healthy+std_auc_healthy,alpha=0.2,color="tab:blue")
+
+    mean_auc_glaucoma = np.array([np.mean(lst_auc_glaucoma_dilation[k]) for k in range(len(lst_auc_glaucoma_dilation))])
+    std_auc_glaucoma = np.array([np.std(lst_auc_glaucoma_dilation[k]) for k in range(len(lst_auc_glaucoma_dilation))])
+    plt.plot(dilation_factors,mean_auc_glaucoma,marker="o",label="glaucoma images",color="tab:orange")
+    plt.fill_between(dilation_factors, mean_auc_glaucoma-std_auc_glaucoma, mean_auc_glaucoma+std_auc_glaucoma,alpha=0.2,color="tab:orange")
+
+
+    plt.title("Evolution of AUC while expanding mask's size")
+    plt.xlabel("Dilation factor")
+    plt.ylabel("Mean AUC across 5-fold")
+    plt.legend(bbox_to_anchor=(1,1))
+    plt.savefig(f"./reports/figures/{savefile_name}.png")
+    savefile_name
+    if show:
+        plt.show()
+
+
 def main():
     print("GENERATING AUC MATRICES")
     generate_auc_per_label("./data/interim/valid_results.csv")
@@ -312,8 +447,17 @@ def main():
     print("\nCREATING t-SNE PLOT")
     plot_tsne()
     
+    print("\n STUDY OF DILATION IMPACT ON NO DISC")
+    masking_param = {"inverse_roi":False,"bounding_box":False}
+    plot_impact_auc("NoDiscDataset_0",masking_param,"mean_auc_dilation_nodisc",True)
+    
+    print("\n STUDY OF DILATION IMPACT ON ONLY DISC")
+    masking_param = {"inverse_roi":True,"bounding_box":False}
+    plot_impact_auc("OnlyDisc_0",masking_param,"mean_auc_dilation_onlydisc",True)
+
     # print("\nGENERATING EXPLAINABILITY MAPS")
     # generate_explainability_map()
+
 
 if __name__ == '__main__':
     log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

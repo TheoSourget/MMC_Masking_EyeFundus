@@ -61,6 +61,8 @@ def make_single_pred(model,image_path):
         Function use to make prediction without Pytorch Dataloader, useful for external dataset
         """
         DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(DEVICE)
+        model.eval()
         img = io.imread(image_path)
         max_value = np.max(img) 
         img = tf.image.resize_with_pad(img, 512, 512)
