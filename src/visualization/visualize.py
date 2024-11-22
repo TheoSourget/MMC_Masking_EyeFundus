@@ -240,6 +240,22 @@ def get_cosine():
             {np.mean(only_discbb_similarities)}+/-{np.std(only_discbb_similarities)}")
 
 
+def scatter_hist(x, y, ax, ax_histx, ax_histy,label,visualisation_param):
+    # no labels
+    ax_histx.tick_params(axis="x", labelbottom=False)
+    ax_histy.tick_params(axis="y", labelleft=False)
+
+    # the scatter plot:
+    ax.scatter(x, y,alpha=0.5,label=label,**visualisation_param)
+
+    bins = np.arange(0, 1, 0.05)
+    ax_histx.hist(x, bins=bins, color=visualisation_param["c"], alpha = 0.5)
+    ax_histy.hist(y, bins=bins, color=visualisation_param["c"], alpha = 0.5, orientation='horizontal')
+    
+    ax_histx.axis('off')
+    ax_histy.axis('off')
+
+
 def plot_tsne(model_name="NormalDataset",show=False):
     """
     Create t-SNE plot of the embeddings of images with different masking produced by the last layer before classification head
@@ -250,13 +266,21 @@ def plot_tsne(model_name="NormalDataset",show=False):
     model_name="NormalDataset"
       
     valid_params={
-        "Normal":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
+        "Full":{"masking_spread":None,"inverse_roi":False,"bounding_box":False},
         "NoDisc":{"masking_spread":0,"inverse_roi":False,"bounding_box":False},
         "NoDiscBB":{"masking_spread":0,"inverse_roi":False,"bounding_box":True},
         "OnlyDisc":{"masking_spread":0,"inverse_roi":True,"bounding_box":False},
         "OnlyDiscBB":{"masking_spread":0,"inverse_roi":True,"bounding_box":True}
     }
     
+    visualisation_param = {
+        "Full":{"c":"tab:blue","marker":"o"},
+        "NoDisc":{"c":"tab:orange","marker":"^"},
+        "NoDiscBB":{"c":"tab:green","marker":"s"},
+        "OnlyDisc":{"c":"purple","marker":"*"},
+        "OnlyDiscBB":{"c":"red","marker":"X"}
+
+    }
     
     models_embeddings,labels_dataset = get_embedding(model_name,valid_params)
     
@@ -293,15 +317,23 @@ def plot_tsne(model_name="NormalDataset",show=False):
 
 
     #Plot divided by masking strategy
-    plt.figure()
+    fig = plt.figure()
+    gs = fig.add_gridspec(2, 2,  width_ratios=(4, 1), height_ratios=(1, 4),
+                      left=0.1, right=0.9, bottom=0.1, top=0.9,
+                      wspace=0.05, hspace=0.05)
+    ax = fig.add_subplot(gs[1, 0])
+    ax_histx = fig.add_subplot(gs[0, 0], sharex=ax)
+    ax_histy = fig.add_subplot(gs[1, 1], sharey=ax)
     for masking_param in valid_params:
         indices = [j for j, l in enumerate(labels_masking) if l == masking_param]
         # extract the coordinates of the points of the current masking
         current_tx = np.take(tx, indices)
         current_ty = np.take(ty, indices)
-        plt.scatter(current_tx,current_ty,label=masking_param,alpha=0.5)
-    plt.title(f"t-SNE of the embeddings before classication head of images with different masking strategy",size=15)
-    plt.legend(bbox_to_anchor=(1,1),fontsize=15)
+        scatter_hist(current_tx, current_ty, ax, ax_histx, ax_histy,masking_param,visualisation_param[masking_param])
+
+        # plt.scatter(current_tx,current_ty,label=masking_param,alpha=0.5,**visualisation_param[masking_param])
+
+    ax.legend(bbox_to_anchor=(2,1),fontsize=15)
     plt.savefig(f"./reports/figures/tsne.png",format='png',bbox_inches='tight')
     if show:
         plt.show()
@@ -431,29 +463,29 @@ def plot_impact_auc(model_name,masking_param,savefile_name,show=False):
     plt.xlabel("Dilation factor")
     plt.ylabel("Mean AUC across 5-fold")
     plt.legend(bbox_to_anchor=(1,1))
-    plt.savefig(f"./reports/figures/{savefile_name}.png")
+    plt.savefig(f"./reports/figures/{savefile_name}.png",bbox_inches='tight')
     savefile_name
     if show:
         plt.show()
 
 
 def main():
-    print("GENERATING AUC MATRICES")
-    generate_auc_per_label("./data/interim/valid_results.csv")
+    # print("GENERATING AUC MATRICES")
+    # generate_auc_per_label("./data/interim/valid_results.csv")
     
-    print("\nCOMPUTING COSINE SIMILARITIES")
-    get_cosine()
+    # print("\nCOMPUTING COSINE SIMILARITIES")
+    # get_cosine()
     
     print("\nCREATING t-SNE PLOT")
     plot_tsne()
     
-    print("\n STUDY OF DILATION IMPACT ON NO DISC")
-    masking_param = {"inverse_roi":False,"bounding_box":False}
-    plot_impact_auc("NoDiscDataset_0",masking_param,"mean_auc_dilation_nodisc",True)
+    # print("\n STUDY OF DILATION IMPACT ON NO DISC")
+    # masking_param = {"inverse_roi":False,"bounding_box":False}
+    # plot_impact_auc("NoDiscDataset_0",masking_param,"mean_auc_dilation_nodisc",True)
     
-    print("\n STUDY OF DILATION IMPACT ON ONLY DISC")
-    masking_param = {"inverse_roi":True,"bounding_box":False}
-    plot_impact_auc("OnlyDisc_0",masking_param,"mean_auc_dilation_onlydisc",True)
+    # print("\n STUDY OF DILATION IMPACT ON ONLY DISC")
+    # masking_param = {"inverse_roi":True,"bounding_box":False}
+    # plot_impact_auc("OnlyDisc_0",masking_param,"mean_auc_dilation_onlydisc",True)
 
     # print("\nGENERATING EXPLAINABILITY MAPS")
     # generate_explainability_map()
