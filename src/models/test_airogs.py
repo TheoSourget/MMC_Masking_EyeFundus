@@ -38,7 +38,7 @@ def eval_model(model,data_info):
             probas = lst_probas[:,i]
             auc_score=roc_auc_score(labels,probas)
             auc_scores.append(auc_score)
-    return auc_scores
+    return auc_scores,lst_labels,lst_probas
 
 def main():
     #Get hyperparameters 
@@ -46,9 +46,10 @@ def main():
     BATCH_SIZE = int(os.environ.get("BATCH_SIZE"))
     CLASSES = os.environ.get("CLASSES").split(",")
     models_names=["NormalDataset","NoDiscDataset_0","NoDiscBB_0","OnlyDisc_0","OnlyDiscBB_0"]
-    
+
     with open("./data/interim/airogs_results.csv", "w") as csv_file:
         csv_file.write("training_set,class,fold,auc")
+
     for model_name in models_names:
         print(model_name)
         for i in range(NB_FOLDS):        
@@ -63,7 +64,12 @@ def main():
 
             data_info = pd.read_csv("./data/processed/airogs/processed_labels.csv")
             data_info["Onehot"] = data_info["Onehot"].apply(lambda x: ast.literal_eval(x))
-            auc_scores = eval_model(model,data_info)
+            auc_scores,lst_labels,lst_probas = eval_model(model,data_info)
+            with open(f"./data/interim/airogs_{model_name}_Fold{i}.csv", "a") as csv_file:
+                csv_file.write(f"label,proba")
+                for label,proba in zip(lst_labels,lst_probas):
+                    csv_file.write(f"\n{label},{proba}")
+
             with open("./data/interim/airogs_results.csv", "a") as csv_file:
                 for j,c in enumerate(CLASSES):
                     csv_file.write(f"\n{model_name},{c},{i},{auc_scores[j]}")
